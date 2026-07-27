@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ScrollView, View, Text, StyleSheet, Pressable } from 'react-native';
 import { FormField, ChipSelector } from '@/components/FormField';
+import { PhotoPicker, GalleryPicker } from '@/components/PhotoPicker';
 import { colors, spacing, typography, radii } from '@/theme/colors';
 import {
   SECTOR_OPTIONS,
@@ -12,6 +13,10 @@ import type { MatchDealProfile } from '@/types/database';
 
 interface Props {
   initial: Partial<MatchDealProfile>;
+  // Id do próprio matchdeal_profile — prefixo do caminho no bucket
+  // `matchdeal`. Null só é possível num instante transitório antes de o
+  // pareamento criar a linha; os pickers ficam ocultos nesse caso.
+  profileId: string | null;
   onSave: (patch: Partial<MatchDealProfile>) => Promise<void>;
   saving: boolean;
 }
@@ -23,7 +28,9 @@ interface Props {
  * depois, em pedidos contextuais — mas mostramos tudo já aqui na v1 para
  * simplicidade de build; o faseamento de UX fica para v1.1.
  */
-export function StartupProfileForm({ initial, onSave, saving }: Props) {
+export function StartupProfileForm({ initial, profileId, onSave, saving }: Props) {
+  const [photoUrl, setPhotoUrl] = useState(initial.photo_url ?? null);
+  const [galleryUrls, setGalleryUrls] = useState<string[]>(initial.gallery_urls ?? []);
   const [website, setWebsite] = useState(initial.website ?? '');
   const [sectors, setSectors] = useState<string[]>(initial.sectors ?? []);
   const [description, setDescription] = useState(initial.description ?? '');
@@ -47,6 +54,8 @@ export function StartupProfileForm({ initial, onSave, saving }: Props) {
 
   const handleSave = () =>
     onSave({
+      photo_url: photoUrl,
+      gallery_urls: galleryUrls,
       website,
       sectors,
       description,
@@ -69,8 +78,16 @@ export function StartupProfileForm({ initial, onSave, saving }: Props) {
         visível a investidores.
       </Text>
 
-      {/* Foto de perfil e pitch deck: upload tratado em componente próprio
-          (ImagePicker) — omitido aqui por brevidade, ver TODO no ARCHITECTURE.md */}
+      {profileId && (
+        <>
+          <PhotoPicker ownerId={profileId} kind="profile-photo" label="Foto de perfil" required value={photoUrl} onChange={setPhotoUrl} />
+          <GalleryPicker ownerId={profileId} value={galleryUrls} onChange={setGalleryUrls} max={5} />
+        </>
+      )}
+      {/* Pitch deck: escolha entre um documento já existente no data room
+          (marcado como não-confidencial) ou upload direto — fica para
+          quando essa distinção existir no lado connectB (ver ARCHITECTURE.md,
+          ponto 5). Por agora o campo aceita um link colado à mão. */}
 
       <FormField label="Website" required value={website} onChangeText={setWebsite} autoCapitalize="none" />
       <ChipSelector label="Setores" required options={SECTOR_OPTIONS} selected={sectors} onToggle={(v) => toggle(sectors, setSectors, v)} />

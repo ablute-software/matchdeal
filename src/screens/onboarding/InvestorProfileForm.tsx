@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ScrollView, Text, StyleSheet, Pressable } from 'react-native';
 import { FormField, ChipSelector } from '@/components/FormField';
+import { PhotoPicker } from '@/components/PhotoPicker';
 import { colors, spacing, typography, radii } from '@/theme/colors';
 import {
   SECTOR_OPTIONS,
@@ -15,11 +16,14 @@ import type { MatchDealProfile } from '@/types/database';
 
 interface Props {
   initial: Partial<MatchDealProfile>;
+  profileId: string | null;
   onSave: (patch: Partial<MatchDealProfile>) => Promise<void>;
   saving: boolean;
 }
 
-export function InvestorProfileForm({ initial, onSave, saving }: Props) {
+export function InvestorProfileForm({ initial, profileId, onSave, saving }: Props) {
+  const [photoUrl, setPhotoUrl] = useState(initial.photo_url ?? null);
+  const [entityLogoUrl, setEntityLogoUrl] = useState(initial.entity_logo_url ?? null);
   const [representativeName, setRepresentativeName] = useState(initial.representative_name ?? '');
   const [entityName, setEntityName] = useState(initial.entity_name ?? '');
   const [entityType, setEntityType] = useState(initial.entity_type ?? '');
@@ -47,6 +51,8 @@ export function InvestorProfileForm({ initial, onSave, saving }: Props) {
 
   const handleSave = () =>
     onSave({
+      photo_url: photoUrl,
+      entity_logo_url: entityLogoUrl,
       representative_name: representativeName,
       entity_name: entityName,
       entity_type: (entityType || null) as MatchDealProfile['entity_type'],
@@ -76,6 +82,13 @@ export function InvestorProfileForm({ initial, onSave, saving }: Props) {
       <Text style={styles.note}>
         Nome do representante, entidade, setores, estágios, geografias e website são obrigatórios.
       </Text>
+
+      {profileId && (
+        <>
+          <PhotoPicker ownerId={profileId} kind="profile-photo" label="Foto do representante" required value={photoUrl} onChange={setPhotoUrl} round />
+          <PhotoPicker ownerId={profileId} kind="entity-logo" label="Logo da entidade" value={entityLogoUrl} onChange={setEntityLogoUrl} />
+        </>
+      )}
 
       <FormField label="Nome completo do representante" required value={representativeName} onChangeText={setRepresentativeName} />
       <FormField label="Nome da entidade" required value={entityName} onChangeText={setEntityName} />

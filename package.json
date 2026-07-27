@@ -16,11 +16,12 @@
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/native-stack": "^6.11.0",
     "@supabase/supabase-js": "^2.45.4",
+    "base64-arraybuffer": "^1.0.2",
     "expo": "~51.0.28",
     "expo-application": "~5.9.1",
     "expo-camera": "~15.0.16",
     "expo-constants": "~16.0.2",
-    "expo-image-picker": "~15.0.7",
+    "expo-image-picker": "~15.1.0",
     "expo-linking": "~6.3.1",
     "expo-notifications": "~0.28.18",
     "expo-secure-store": "~13.0.2",
@@ -37,8 +38,8 @@
   "devDependencies": {
     "@babel/core": "^7.24.0",
     "@types/react": "~18.2.79",
-    "babel-preset-expo": "~11.0.0",
     "babel-plugin-module-resolver": "^5.0.2",
+    "babel-preset-expo": "~11.0.0",
     "typescript": "~5.3.3"
   }
 }

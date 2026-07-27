@@ -22,11 +22,16 @@ export function ProfileSetupScreen() {
   const kind = profile?.kind ?? profileKindOf(session);
 
   async function handleSave(patch: Partial<MatchDealProfile>) {
-    if (!session?.user?.user_metadata?.membership_id) return;
+    // membership_id vem do próprio `profile` (resolvido por
+    // matchdeal_my_profile(), migração 0007) — nunca de user_metadata, que
+    // nenhuma conta de founder preenche. Para o lado startup, o `profile`
+    // já existe sempre aqui: a Edge Function de pareamento cria-o
+    // sincronamente, antes de a app alguma vez chegar a este ecrã.
+    if (!profile?.membership_id) return;
     setSaving(true);
     await supabase.from('matchdeal_profiles').upsert(
       {
-        membership_id: session.user.user_metadata.membership_id,
+        membership_id: profile.membership_id,
         kind,
         ...patch,
       },
@@ -44,9 +49,13 @@ export function ProfileSetupScreen() {
     );
   }
 
+  // Os pickers de foto/logo/galeria precisam de um id para o caminho no
+  // bucket `matchdeal`. Usa-se profile.id quando já existe (sempre o caso
+  // no lado startup, criado pelo pareamento); antes disso, o utilizador
+  // simplesmente ainda não vê os campos de imagem.
   return kind === 'startup' ? (
-    <StartupProfileForm initial={profile ?? {}} onSave={handleSave} saving={saving} />
+    <StartupProfileForm initial={profile ?? {}} profileId={profile?.id ?? null} onSave={handleSave} saving={saving} />
   ) : (
-    <InvestorProfileForm initial={profile ?? {}} onSave={handleSave} saving={saving} />
+    <InvestorProfileForm initial={profile ?? {}} profileId={profile?.id ?? null} onSave={handleSave} saving={saving} />
   );
 }

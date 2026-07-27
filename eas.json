@@ -1,0 +1,30 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://wkjcaoqdvhykrfacsylr.supabase.co"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://wkjcaoqdvhykrfacsylr.supabase.co"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://wkjcaoqdvhykrfacsylr.supabase.co"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

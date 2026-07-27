@@ -33,17 +33,20 @@ export function AuthSessionProvider({ children }: { children: React.ReactNode })
       setProfile(null);
       return;
     }
-    // NOTA: a resolução membership_id -> profile assume que o cliente já
-    // conhece o membership_id do utilizador (guardado no momento do
-    // pareamento QR). Ajustar conforme o schema real for confirmado.
-    const membershipId = session.user.user_metadata?.membership_id as string | undefined;
-    if (!membershipId) return;
-    const { data } = await supabase
-      .from('matchdeal_profiles')
-      .select('*')
-      .eq('membership_id', membershipId)
-      .maybeSingle();
-    setProfile((data as unknown as MatchDealProfile) ?? null);
+    // Resolvido via matchdeal_my_profile() (migração 0007) — NÃO via
+    // session.user.user_metadata.membership_id, que era a suposição
+    // original do scaffold e nunca teria valor real: nada escreve esse
+    // metadata numa conta de founder que já existia antes do MatchDeal. A
+    // RPC usa o mesmo caminho de resolução do RLS (matchdeal_current_profile_ids),
+    // por isso funciona tanto para o lado startup (org_members) como,
+    // quando a Fase 0 ligar a flag, para o lado investidor.
+    // A função devolve `public.matchdeal_profiles` (linha única, não
+    // setof), por isso o PostgREST já devolve um objeto — sem `.single()`,
+    // que é só para quando se restringe um SELECT normal a uma linha.
+    const { data, error } = await supabase.rpc('matchdeal_my_profile');
+    if (error) { setProfile(null); return; }
+    const row = data as unknown as MatchDealProfile | null;
+    setProfile(row?.id ? row : null);
   };
 
   useEffect(() => {

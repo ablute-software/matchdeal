@@ -6,29 +6,27 @@ import { supabase } from '@/lib/supabase';
 import { colors, spacing, typography, radii } from '@/theme/colors';
 
 /**
- * Pareamento estilo "WhatsApp Web ao contrário": o browser já tem a
- * sessão SherlockDeal autenticada e mostra um QR gerado a partir de um
- * `pairing_token` criado em matchdeal_device_links (ver Web:
- * botão "MatchDeal" -> landing -> QR). Aqui a app:
- *  1. Gera/recebe esse token (via deep link matchdeal://pair/<token> ao
- *     abrir a app pela primeira vez, OU pede para digitalizar o QR do
- *     browser — a implementação de câmara fica no ecrã ScanQRScreen,
- *     omitido aqui por brevidade; ambos os caminhos acabam na mesma
- *     função `completePairing`).
- *  2. Troca o token por uma sessão Supabase válida via RPC
- *     `matchdeal_complete_device_pairing` (a implementar no lado do
- *     backend/Edge Function — não em SQL puro, porque a emissão de uma
- *     sessão Supabase Auth requer a service role key, que nunca deve
- *     viver no cliente mobile).
+ * Pareamento estilo "WhatsApp Web ao contrário": o browser já tem a sessão
+ * SherlockDeal autenticada; o telemóvel gera o token e mostra o QR, o
+ * browser lê-o (scan ou digita) e chama a Edge Function `matchdeal-pair`
+ * com esse token + a sua própria sessão. O ecrã do browser (botão
+ * "MatchDeal" -> landing -> QR) é um prompt connectB futuro, à parte —
+ * aqui só se assume que ALGUÉM autenticado como founder vai chamar essa
+ * função com o token abaixo, dentro dos 90s de validade.
  *
- * Esta implementação mostra o ecrã de espera com polling — o cenário mais
- * simples de validar primeiro é o QR ser gerado NO BROWSER (SherlockDeal
- * web) e a APP fazer o scan, porque assim o segredo nunca passa pela app
- * antes de ser confirmado pelo dono da sessão já autenticada.
+ * Troca do token por sessão real: a Edge Function nunca devolve uma sessão
+ * diretamente ao browser para o telemóvel "receber" por deep link — isso
+ * provou-se frágil (navegação para um action_link não sincroniza sessão de
+ * forma fiável). Em vez disso, ela deixa email + um código OTP de uso único
+ * na própria linha de matchdeal_device_links (ver migração 0007), que o
+ * telemóvel — que já sabe consultar essa linha, é ele quem a criou — troca
+ * diretamente por uma sessão chamando `auth.verifyOtp`. Chamada direta ao
+ * SDK, sem navegação de URL nenhuma.
  */
 export function QRPairingScreen() {
   const [pairingToken, setPairingToken] = useState<string | null>(null);
-  const [status, setStatus] = useState<'idle' | 'waiting' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'waiting' | 'pairing' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -59,19 +57,41 @@ export function QRPairingScreen() {
   }
 
   async function checkPairingStatus(token: string) {
+    // membership_id NÃO faz parte desta condição — a Edge Function
+    // deixa-o propositadamente null (ver migração 0007), é o próprio
+    // telemóvel que o define mais abaixo, depois de já ter sessão.
     const { data } = await supabase
       .from('matchdeal_device_links')
-      .select('membership_id, used_at')
+      .select('used_at, session_email, session_email_otp')
       .eq('pairing_token', token)
       .maybeSingle();
 
-    if (data?.used_at && data?.membership_id) {
+    if (data?.used_at && data?.session_email && data?.session_email_otp) {
       if (pollRef.current) clearInterval(pollRef.current);
-      // A troca por uma sessão Supabase Auth real acontece do lado do
-      // browser/Edge Function que confirmou o pareamento (magic link ou
-      // custom token) — aqui só confirmamos que passou, e o listener de
-      // auth state (useAuthSession) trata do resto quando a sessão chegar
-      // por deep link.
+      await redeemSession(token, data.session_email, data.session_email_otp);
+    }
+  }
+
+  async function redeemSession(token: string, email: string, otp: string) {
+    setStatus('pairing');
+    const { error: otpErr } = await supabase.auth.verifyOtp({ email, token: otp, type: 'email' });
+    if (otpErr) {
+      setStatus('error');
+      setErrorMessage('Não foi possível completar a associação. Tenta gerar um novo código.');
+      return;
+    }
+
+    // Sessão real estabelecida — useAuthSession.onAuthStateChange já vai
+    // apanhar isto e correr refreshProfile() sozinho. Aqui só se sela a
+    // linha de pareamento: define membership_id (fecha o acesso anónimo à
+    // linha, ver 0007) e limpa o OTP como defesa em profundidade.
+    const { data: profile } = await supabase.rpc('matchdeal_my_profile');
+    const membershipId = (profile as { membership_id?: string } | null)?.membership_id;
+    if (membershipId) {
+      await supabase
+        .from('matchdeal_device_links')
+        .update({ membership_id: membershipId, session_email_otp: null })
+        .eq('pairing_token', token);
     }
   }
 
@@ -88,7 +108,7 @@ export function QRPairingScreen() {
       </Text>
 
       <View style={styles.qrWrap}>
-        {pairingToken ? (
+        {pairingToken && status !== 'pairing' ? (
           <QRCode value={`matchdeal://pair/${pairingToken}`} size={220} />
         ) : (
           <ActivityIndicator color={colors.mintAccent} />
@@ -98,9 +118,12 @@ export function QRPairingScreen() {
       {status === 'waiting' && (
         <Text style={styles.hint}>A aguardar confirmação no browser…</Text>
       )}
+      {status === 'pairing' && (
+        <Text style={styles.hint}>A associar a tua conta…</Text>
+      )}
       {status === 'error' && (
         <Text style={[styles.hint, { color: colors.danger }]}>
-          Não foi possível gerar o código. Tenta novamente.
+          {errorMessage ?? 'Não foi possível gerar o código. Tenta novamente.'}
         </Text>
       )}
     </View>
