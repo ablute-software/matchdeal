@@ -19,9 +19,20 @@ import { colors, spacing, typography, radii } from '@/theme/colors';
  * provou-se frágil (navegação para um action_link não sincroniza sessão de
  * forma fiável). Em vez disso, ela deixa email + um código OTP de uso único
  * na própria linha de matchdeal_device_links (ver migração 0007), que o
- * telemóvel — que já sabe consultar essa linha, é ele quem a criou — troca
- * diretamente por uma sessão chamando `auth.verifyOtp`. Chamada direta ao
- * SDK, sem navegação de URL nenhuma.
+ * telemóvel troca diretamente por uma sessão chamando `auth.verifyOtp`.
+ * Chamada direta ao SDK, sem navegação de URL nenhuma.
+ *
+ * Migração 0009 (hardening): o telemóvel já NÃO lê/escreve
+ * matchdeal_device_links diretamente — a policy que permitia isso a
+ * qualquer cliente anónimo (`membership_id is null`) deixava QUALQUER
+ * pessoa com a anon key fazer polling e roubar o email+OTP de pareamentos
+ * alheios antes do telemóvel legítimo os resgatar (account takeover real,
+ * fechado em produção). O acesso passa a ir por dois RPCs SECURITY DEFINER
+ * keyed pelo próprio pairing_token — a mesma ideia de sempre ("o token é
+ * que garante segurança"), só que aplicada no sítio que a consegue
+ * exprimir: `matchdeal_pairing_poll` (devolve o OTP uma única vez, limpa-o
+ * na mesma transação) e `matchdeal_pairing_seal` (com sessão real, sela a
+ * linha — substitui o update direto que havia aqui antes).
  */
 export function QRPairingScreen() {
   const [pairingToken, setPairingToken] = useState<string | null>(null);
@@ -57,19 +68,26 @@ export function QRPairingScreen() {
   }
 
   async function checkPairingStatus(token: string) {
-    // membership_id NÃO faz parte desta condição — a Edge Function
-    // deixa-o propositadamente null (ver migração 0007), é o próprio
-    // telemóvel que o define mais abaixo, depois de já ter sessão.
-    const { data } = await supabase
-      .from('matchdeal_device_links')
-      .select('used_at, session_email, session_email_otp')
-      .eq('pairing_token', token)
-      .maybeSingle();
+    const { data, error } = await supabase.rpc('matchdeal_pairing_poll', { p_pairing_token: token });
+    // A RPC devolve `setof` (uma linha), por isso vem como array — nunca um
+    // objeto único, ao contrário de matchdeal_my_profile() (linha).
+    const row = (Array.isArray(data) ? data[0] : data) as unknown as
+      { status: string; session_email: string | null; session_email_otp: string | null } | undefined;
+    if (error || !row) return;
 
-    if (data?.used_at && data?.session_email && data?.session_email_otp) {
+    if (row.status === 'sealed' || row.status === 'expired' || row.status === 'not_found') {
       if (pollRef.current) clearInterval(pollRef.current);
-      await redeemSession(token, data.session_email, data.session_email_otp);
+      setStatus('error');
+      setErrorMessage(
+        row.status === 'expired' ? 'O código expirou. Gera um novo.' : 'Este código já não é válido. Gera um novo.'
+      );
+      return;
     }
+    if (row.status === 'ready' && row.session_email && row.session_email_otp) {
+      if (pollRef.current) clearInterval(pollRef.current);
+      await redeemSession(token, row.session_email, row.session_email_otp);
+    }
+    // 'pending' — continua a fazer poll, nada a fazer aqui.
   }
 
   async function redeemSession(token: string, email: string, otp: string) {
@@ -83,15 +101,12 @@ export function QRPairingScreen() {
 
     // Sessão real estabelecida — useAuthSession.onAuthStateChange já vai
     // apanhar isto e correr refreshProfile() sozinho. Aqui só se sela a
-    // linha de pareamento: define membership_id (fecha o acesso anónimo à
-    // linha, ver 0007) e limpa o OTP como defesa em profundidade.
-    const { data: profile } = await supabase.rpc('matchdeal_my_profile');
-    const membershipId = (profile as { membership_id?: string } | null)?.membership_id;
-    if (membershipId) {
-      await supabase
-        .from('matchdeal_device_links')
-        .update({ membership_id: membershipId, session_email_otp: null })
-        .eq('pairing_token', token);
+    // linha de pareamento (matchdeal_pairing_seal, migração 0009 — o
+    // update direto que havia aqui deixou de ser possível de propósito).
+    const { data: sealed, error: sealErr } = await supabase.rpc('matchdeal_pairing_seal', { p_pairing_token: token });
+    if (sealErr || !sealed) {
+      setStatus('error');
+      setErrorMessage('A sessão foi criada, mas não foi possível confirmar o pareamento. Tenta novamente.');
     }
   }
 
